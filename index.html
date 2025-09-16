@@ -1,0 +1,234 @@
+<!-- index.html -->
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>BBS .bbs.json Generator</title>
+  <link rel="stylesheet" href="style.css">
+  <!--
+    Ce fichier index.html + style.css créent une page simple inspirée du style animé
+    du site demandé (fond animé en canvas + interface propre).
+
+    Fonctionnalités :
+    - zone de texte pour décrire le modèle 3D (en français ou anglais)
+    - génération d'une texture (canvas) influencée par la description
+    - création d'un fichier .bbs.json téléchargeable qui contient :
+        { metadata, description, simple "mesh" placeholder, texture (data URL) }
+    - tout est réalisé côté client (JavaScript), pas de back-end nécessaire.
+
+    Sauvegardez ce contenu dans `index.html` et le contenu CSS dans `style.css` (fourni ci-dessous).
+  -->
+</head>
+<body>
+  <canvas id="bg"></canvas>
+  <main class="card">
+    <h1>BBS .bbs.json Générateur</h1>
+
+    <label for="name">Nom du modèle</label>
+    <input id="name" placeholder="Ex : robot-cube" />
+
+    <label for="desc">Description du modèle (décrivez la forme, couleurs, motifs...)</label>
+    <textarea id="desc" rows="6" placeholder="Ex : petit robot cubique, yeux verts, texture métallique rayée..."></textarea>
+
+    <div class="controls">
+      <button id="genTexture">Générer la texture</button>
+      <button id="genModel">Générer et télécharger .bbs.json</button>
+    </div>
+
+    <div class="preview">
+      <h2>Aperçu texture</h2>
+      <canvas id="texturePreview" width="512" height="512"></canvas>
+      <a id="downloadTexture" download="texture.png">Télécharger la texture</a>
+    </div>
+
+    <p class="hint">Le fichier .bbs.json contient un exemple de modèle (primitive) et la texture encodée. Vous pouvez l'adapter à votre chaîne d'outils BBS.</p>
+  </main>
+
+  <script>
+  // Background particles animation (simple, performant)
+  const bg = document.getElementById('bg');
+  const ctx = bg.getContext('2d');
+  let particles = [];
+  const DPR = Math.min(window.devicePixelRatio || 1, 2);
+
+  function resize(){
+    bg.width = innerWidth * DPR;
+    bg.height = innerHeight * DPR;
+    bg.style.width = innerWidth + 'px';
+    bg.style.height = innerHeight + 'px';
+  }
+  window.addEventListener('resize', resize);
+  resize();
+
+  function initParticles(){
+    particles = [];
+    const count = Math.round((innerWidth * innerHeight) / 60000) + 40;
+    for(let i=0;i<count;i++){
+      particles.push({
+        x: Math.random()*bg.width,
+        y: Math.random()*bg.height,
+        r: (2 + Math.random()*6) * DPR,
+        vx: (Math.random()-0.5) * 0.6,
+        vy: (Math.random()-0.5) * 0.6,
+        hue: Math.floor(180 + Math.random()*120)
+      });
+    }
+  }
+  initParticles();
+
+  function tick(){
+    ctx.clearRect(0,0,bg.width,bg.height);
+    // gradient overlay
+    const g = ctx.createLinearGradient(0,0,bg.width,bg.height);
+    g.addColorStop(0, 'rgba(12,14,28,0.6)');
+    g.addColorStop(1, 'rgba(24,12,40,0.6)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0,0,bg.width,bg.height);
+
+    for(const p of particles){
+      p.x += p.vx;
+      p.y += p.vy;
+      if(p.x < -50) p.x = bg.width + 50;
+      if(p.x > bg.width + 50) p.x = -50;
+      if(p.y < -50) p.y = bg.height + 50;
+      if(p.y > bg.height + 50) p.y = -50;
+
+      // glow
+      ctx.beginPath();
+      ctx.fillStyle = `hsla(${p.hue},60%,60%,0.08)`;
+      ctx.arc(p.x, p.y, p.r*3.5, 0, Math.PI*2);
+      ctx.fill();
+
+      ctx.beginPath();
+      ctx.fillStyle = `hsla(${p.hue},70%,60%,0.18)`;
+      ctx.arc(p.x, p.y, p.r*1.25, 0, Math.PI*2);
+      ctx.fill();
+    }
+
+    requestAnimationFrame(tick);
+  }
+  tick();
+
+  // --- Model & texture generation ---
+  const descEl = document.getElementById('desc');
+  const nameEl = document.getElementById('name');
+  const genTexBtn = document.getElementById('genTexture');
+  const genModelBtn = document.getElementById('genModel');
+  const texCanvas = document.getElementById('texturePreview');
+  const texCtx = texCanvas.getContext('2d');
+  const downloadTexture = document.getElementById('downloadTexture');
+
+  function hashString(s){
+    let h=2166136261>>>0;
+    for(let i=0;i<s.length;i++){
+      h ^= s.charCodeAt(i);
+      h += (h<<1) + (h<<4) + (h<<7) + (h<<8) + (h<<24);
+    }
+    return h >>> 0;
+  }
+
+  function generateTextureFromText(text, w=512, h=512){
+    // Use hash to pick base hue, pattern
+    const hval = hashString(text);
+    const hue = (hval % 360);
+    // gradient
+    const g = texCtx.createLinearGradient(0,0,w,h);
+    g.addColorStop(0, `hsl(${hue}, 55%, 35%)`);
+    g.addColorStop(1, `hsl(${(hue+40)%360}, 55%, 55%)`);
+    texCtx.fillStyle = g;
+    texCtx.fillRect(0,0,w,h);
+
+    // noise/pattern
+    const step = 6 + (hval % 12);
+    texCtx.globalAlpha = 0.18;
+    for(let y=0;y<h;y+=step){
+      texCtx.beginPath();
+      for(let x=-50;x<w+50;x+=20){
+        const ky = y + Math.sin((x+y+ (hval%200)) * 0.02) * 8;
+        texCtx.lineTo(x, ky);
+      }
+      texCtx.strokeStyle = `hsla(${(hue+180)%360},50%,60%,0.25)`;
+      texCtx.lineWidth = 1.2;
+      texCtx.stroke();
+    }
+    texCtx.globalAlpha = 1;
+
+    // add title text from description
+    texCtx.font = '24px system-ui';
+    texCtx.fillStyle = 'rgba(255,255,255,0.12)';
+    texCtx.fillText(text.slice(0,80), 12, h - 20);
+
+    return texCanvas.toDataURL('image/png');
+  }
+
+  genTexBtn.addEventListener('click', ()=>{
+    const txt = descEl.value.trim() || 'texture';
+    const dataUrl = generateTextureFromText(txt);
+    downloadTexture.href = dataUrl;
+    downloadTexture.download = (nameEl.value.trim() || 'texture') + '.png';
+    alert('Texture générée — aperçue mise à jour. Cliquez sur "Télécharger la texture" pour la sauvegarder.');
+  });
+
+  function makeSimpleMeshFromText(text){
+    // This creates a trivial placeholder "mesh" object (not a full real mesh),
+    // enough to serve as a starting point in .bbs.json. Real 3D exporters should be
+    // used for production models.
+    const h = hashString(text);
+    const size = 0.4 + (h % 900) / 1000; // 0.4 .. 1.3
+    const colorHue = h % 360;
+
+    return {
+      type: 'primitive',
+      primitive: 'cube',
+      params: { size },
+      material: { type: 'standard', color: `hsl(${colorHue},60%,60%)` }
+    };
+  }
+
+  function generateBBSJson(name, desc, textureDataUrl){
+    const model = {
+      version: '1.0',
+      name: name || 'untitled',
+      description: desc || '',
+      generatedAt: new Date().toISOString(),
+      generator: 'bbs-3d-generator (client-side)',
+      texture: textureDataUrl || null,
+      mesh: makeSimpleMeshFromText(desc || name || 'model')
+    };
+    return JSON.stringify(model, null, 2);
+  }
+
+  genModelBtn.addEventListener('click', ()=>{
+    const name = (nameEl.value || 'model').trim();
+    const desc = descEl.value || '';
+    // ensure texture exists
+    const texture = generateTextureFromText(desc || name);
+    downloadTexture.href = texture;
+    downloadTexture.download = (name || 'texture') + '.png';
+
+    const json = generateBBSJson(name, desc, texture);
+    const blob = new Blob([json], {type: 'application/json'});
+    const url = URL.createObjectURL(blob);
+
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = (name || 'model') + '.bbs.json';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+
+    alert('.bbs.json généré et téléchagé — il contient une texture encodée en data URL et un mesh "primitive".');
+  });
+
+  // set a default example
+  descEl.value = 'Petit robot cubique, panneaux métalliques alternés, yeux verts lumineux.';
+  nameEl.value = 'robot-cubique';
+  // draw initial texture
+  generateTextureFromText(descEl.value);
+  downloadTexture.href = texCanvas.toDataURL();
+  downloadTexture.style.display = 'inline-block';
+  </script>
+</body>
+</html>
